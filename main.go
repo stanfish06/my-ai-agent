@@ -20,7 +20,7 @@ func main() {
 		}
 		return scanner.Text(), true
 	}
-	tools := []ToolDefinition{}
+	tools := []ToolDefinition{ReadFileDefinition}
 	agent := NewAgent(&client, getUserMsg, tools)
 	err := agent.Launch(context.TODO())
 	if err != nil {
@@ -53,7 +53,7 @@ type ToolDefinition struct {
 // Tool: read_file
 var ReadFileDefinition = ToolDefinition{
 	Name:        "read_file",
-	Description: "Read the contents of a given relative file path. Use it on files when needed, won't work with directories.",
+	Description: "Read the contents of a given relative file path. Use this when you want to see what's inside a file. Do not use this with directory names.",
 	InputSchema: ReadFileInputSchema,
 	Function:    ReadFile,
 }
@@ -100,29 +100,66 @@ func (a *Agent) Launch(ctx context.Context) error {
 	conversation := []anthropic.MessageParam{}
 	fmt.Println("Hello! (exit with <C-c>")
 
+	// when a model request tool use, toggle this off. Basically, when detecting agent requires tool use, dont do user input but execute the tool, grab tool output (if any) and send message back to tool.
+	readUserInput := true
 	for {
-		// user prompt head
-		fmt.Print("User: ")
-		userInput, ok := a.getUserMsg()
-		if !ok {
-			break
+		if readUserInput {
+			// user prompt head
+			fmt.Print("User: ")
+			userInput, ok := a.getUserMsg()
+			if !ok {
+				break
+			}
+			userMsg := anthropic.NewUserMessage(anthropic.NewTextBlock(userInput))
+			conversation = append(conversation, userMsg)
 		}
-		userMsg := anthropic.NewUserMessage(anthropic.NewTextBlock(userInput))
-		conversation = append(conversation, userMsg)
 		msg, err := a.runInference(ctx, conversation)
 		if err != nil {
 			return err
 		}
+		conversation = append(conversation, msg.ToParam())
 
+		toolResults := []anthropic.ContentBlockParamUnion{}
 		for _, content := range msg.Content {
 			switch content.Type {
 			case "text":
 				fmt.Printf("Claude: %s\n", content.Text)
+			case "tool_use":
+				result := a.executeTool(content.ID, content.Name, content.Input)
+				toolResults = append(toolResults, result)
 			}
 		}
+		if len(toolResults) == 0 {
+			readUserInput = true
+			continue
+		}
+		// when tool has results, need to send back to model to process
+		readUserInput = false
+		conversation = append(conversation, anthropic.NewUserMessage(toolResults...))
 	}
 
 	return nil
+}
+
+func (a *Agent) executeTool(id, name string, input json.RawMessage) anthropic.ContentBlockParamUnion {
+	var toolDef ToolDefinition
+	var found bool
+	for _, tool := range a.tools {
+		if tool.Name == name {
+			toolDef = tool
+			found = true
+			break
+		}
+	}
+	if !found {
+		return anthropic.NewToolResultBlock(id, "tool not found", true)
+	}
+	fmt.Printf("tool %s(%s)\n", name, input)
+	response, err := toolDef.Function(input)
+	if err != nil {
+		return anthropic.NewToolResultBlock(id, err.Error(), true)
+	}
+	return anthropic.NewToolResultBlock(id, response, false)
 }
 
 func (a *Agent) runInference(ctx context.Context, conversation []anthropic.MessageParam) (*anthropic.Message, error) {
@@ -138,9 +175,10 @@ func (a *Agent) runInference(ctx context.Context, conversation []anthropic.Messa
 		})
 	}
 	msg, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_6,
+		Model:     anthropic.ModelClaudeHaiku4_5,
 		MaxTokens: int64(1024),
 		Messages:  conversation,
+		Tools:     anthrophicTools,
 	})
 	return msg, err
 }
