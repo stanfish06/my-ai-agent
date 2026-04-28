@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/invopop/jsonschema"
 )
 
 func main() {
@@ -47,6 +48,46 @@ type ToolDefinition struct {
 	Description string
 	InputSchema anthropic.ToolInputSchemaParam
 	Function    func(input json.RawMessage) (string, error)
+}
+
+// Tool: read_file
+var ReadFileDefinition = ToolDefinition{
+	Name:        "read_file",
+	Description: "Read the contents of a given relative file path. Use it on files when needed, won't work with directories.",
+	InputSchema: ReadFileInputSchema,
+	Function:    ReadFile,
+}
+
+type ReadFileInput struct {
+	Path string `json:"path" jsonschema_description: "the relative path of a file in the current working directory"`
+}
+
+var ReadFileInputSchema = GenerateSchema[ReadFileInput]()
+
+func ReadFile(input json.RawMessage) (string, error) {
+	readFileInput := ReadFileInput{}
+	err := json.Unmarshal(input, &readFileInput)
+	if err != nil {
+		panic(err)
+	}
+
+	content, err := os.ReadFile(readFileInput.Path)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+func GenerateSchema[T any]() anthropic.ToolInputSchemaParam {
+	reflector := jsonschema.Reflector{
+		AllowAdditionalProperties: false,
+		DoNotReference:            true,
+	}
+	var v T
+	schema := reflector.Reflect(v)
+
+	return anthropic.ToolInputSchemaParam{
+		Properties: schema.Properties,
+	}
 }
 
 type Agent struct {
