@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -18,23 +19,40 @@ func main() {
 		}
 		return scanner.Text(), true
 	}
-	agent := NewAgent(&client, getUserMsg)
+	tools := []ToolDefinition{}
+	agent := NewAgent(&client, getUserMsg, tools)
 	err := agent.Launch(context.TODO())
 	if err != nil {
 		fmt.Printf("Error: %s\n", err.Error())
 	}
 }
 
-func NewAgent(client *anthropic.Client, getUserMsg func() (string, bool)) *Agent {
+func NewAgent(client *anthropic.Client, getUserMsg func() (string, bool), tools []ToolDefinition) *Agent {
 	return &Agent{
 		client:     client,
 		getUserMsg: getUserMsg,
+		tools:      tools,
 	}
+}
+
+/* Let agent use tools
+- user tells model what tools are available
+- model decides if it wants to use a tool at some point and specifically send request for that tool
+- user runs tool on its send and send back any outputs if available
+*/
+
+// A tool needs to be defined in a certain way
+type ToolDefinition struct {
+	Name        string
+	Description string
+	InputSchema anthropic.ToolInputSchemaParam
+	Function    func(input json.RawMessage) (string, error)
 }
 
 type Agent struct {
 	client     *anthropic.Client // anthropic client will look for ANTHROPIC_API_KEY
 	getUserMsg func() (string, bool)
+	tools      []ToolDefinition
 }
 
 func (a *Agent) Launch(ctx context.Context) error {
@@ -67,6 +85,17 @@ func (a *Agent) Launch(ctx context.Context) error {
 }
 
 func (a *Agent) runInference(ctx context.Context, conversation []anthropic.MessageParam) (*anthropic.Message, error) {
+	// send available tools to model
+	anthrophicTools := []anthropic.ToolUnionParam{}
+	for _, tool := range a.tools {
+		anthrophicTools = append(anthrophicTools, anthropic.ToolUnionParam{
+			OfTool: &anthropic.ToolParam{
+				Name:        tool.Name,
+				Description: anthropic.String(tool.Description),
+				InputSchema: tool.InputSchema,
+			},
+		})
+	}
 	msg, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_6,
 		MaxTokens: int64(1024),
