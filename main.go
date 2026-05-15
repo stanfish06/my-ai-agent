@@ -3,19 +3,23 @@ package main
 import (
 	"bufio"
 	"context"
-	"strings"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/invopop/jsonschema"
 )
 
 func main() {
-	client := anthropic.NewClient()
+	client := anthropic.NewClient(
+		option.WithAPIKey(os.Getenv("FIREWORKS_API_KEY")),
+		option.WithBaseURL("https://api.fireworks.ai/inference"),
+	)
 	scanner := bufio.NewScanner(os.Stdin)
 	getUserMsg := func() (string, bool) {
 		if !scanner.Scan() {
@@ -224,7 +228,7 @@ type Agent struct {
 
 func (a *Agent) Launch(ctx context.Context) error {
 	conversation := []anthropic.MessageParam{}
-	fmt.Println("Hello! (exit with <C-c>")
+	fmt.Println("Hello! (exit with <C-c>)")
 
 	// when a model request tool use, toggle this off. Basically, when detecting agent requires tool use, dont do user input but execute the tool, grab tool output (if any) and send message back to tool.
 	readUserInput := true
@@ -301,7 +305,7 @@ func (a *Agent) runInference(ctx context.Context, conversation []anthropic.Messa
 		})
 	}
 	msg, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeHaiku4_5,
+		Model:     "accounts/fireworks/models/deepseek-v4-pro", // TODO: allow model switch
 		MaxTokens: int64(1024),
 		Messages:  conversation,
 		Tools:     anthrophicTools,
