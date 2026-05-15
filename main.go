@@ -308,6 +308,7 @@ func (a *Agent) runInference(ctx context.Context, conversation []anthropic.Messa
 		Model:     "accounts/fireworks/models/deepseek-v4-pro", // TODO: allow model switch
 		MaxTokens: int64(1024),
 		Messages:  conversation,
+		System:    []anthropic.TextBlockParam{{Text: "You are DeepSeek..."}}, // otherwise it will think it is claude
 		Tools:     anthrophicTools,
 	})
 	return msg, err
